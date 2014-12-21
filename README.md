@@ -1,7 +1,9 @@
 Practical-Machine-Learning-Project
 ==================================
 
-The Project_Writeup.html file nicely sums up the project. However, I neglected to print out the prediction results on the test data set.
+The Project_Writeup.html file nicely sums up the project. I apologize that I am unable to create an gh-pages branch. You may have to clone the repo to view the compiled HTML file.
+
+However, I neglected to print out the prediction results on the test data set and will not be able to do so since the publishing process takes 4 hours on my machine.
 
 The prediction results are as follows:  
 1. B  
