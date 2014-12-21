@@ -1,0 +1,166 @@
+---
+title: "Practical Machine Learning Project Write Up"
+output: html_document
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(results = "hold", 
+                      fig.show = "hold", 
+                      fig.align = "center", 
+                      message = F, 
+                      warning = F)
+```
+
+## Introduction
+
+In this project, data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways was used. The goal of the project was to predict the manner in which participants exercised as indicated by the **"classe"** variable in the training set.  
+  
+## Machine Set Up   
+
+Firstly, the working directory is set (not shown) and the required packages are loaded.
+
+```{r}
+sapply(c("data.table",
+         "reshape2",
+         "doParallel",
+         "foreach",
+         "caret",
+         "randomForest",
+         "gbm"),
+       require, character.only = T)
+```
+
+Next, I take advantage of my machine's multiple cores by using parallel processing to speed up some of the following computations.
+
+```{r}
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+```
+
+## Data Processing
+
+The data is read into R and a simple check is done to ensure that the variables in each set are identical. While the training data has the **"classe"** variable, the testing data has the **"problem_id"** variable.
+
+```{r}
+# Reading the data
+training <- fread("Raw Data/pml-training.csv", na.strings = c("", "NA", "#DIV/0!"))
+testing <- fread("Raw Data/pml-testing.csv", na.strings = c("", "NA", "#DIV/0!"))
+
+# Check if the test and training datasets contain the same variables
+identical(names(testing), names(training)) 
+
+# Identify the mismatched variables in each dataset
+mismatchVarInd <- which(!(names(testing) %in% names(training)))
+names(testing)[mismatchVarInd]
+names(training)[mismatchVarInd]
+
+# Check if all other variables are equal besides "problem_id" and "classe"
+identical(names(testing)[1:159], names(testing)[1:159])
+```
+
+An inspection of the training data shows that there are many NA values in several columns. These columns have at least 19216 missing values. Thus, they would not be useful in predicting the outcome of new data. Hence, these columns are removed from both the training and test dataset. Additionally, the first seven columns contain participant details which are unhelpful in prediction. Thus, these columns are also removed. The **"classe"** variable is also converted to factor format.
+
+```{r, results = "hide"}
+# Summary of the training data
+str(training)
+
+# Count the number of NA values for each field
+NAValues <- training[, lapply(.SD, function(x) sum(is.na(x)))]
+str(NAValues) 
+
+# Proceed to remove those columns of data since they will not be useful for prediction
+NAValues <- melt(NAValues)
+setkey(NAValues, "value")
+NAValues <- NAValues[list(0)]
+NAValues <- as.character(NAValues[["variable"]])
+
+# Reminding ourselves that the NAValues vector will contain those variables we want to keep,
+# we need to add in the mismatched variable from the test dataset
+NAValues <- c(NAValues, names(testing)[mismatchVarInd])
+
+# Proceed to remove unnecessary columns from both the traning and test data set
+training[, names(training)[!(names(training) %in% NAValues)] := NULL]
+training[, names(training)[1:7] := NULL]
+testing[, names(testing)[!(names(testing) %in% NAValues)] := NULL]
+testing[, names(testing)[1:7] := NULL]
+
+# Convert the classe column to factor
+training[, "classe" := as.factor(classe)]
+```
+
+The next step was to check for variables with near zero variance. However, none of the remaining variables were found to have been necessary to remove. Thus, the final training dataset consisted of 52 predictors and 1 outcome variable for a total of 53 columns as shown in the following:
+
+```{r}
+print(nsv <- nearZeroVar(training, saveMetrics = T))
+```
+
+## Model Building
+
+From theory, the random forest algorithm is a powerful ensemble learning method that would be appropriate for this prediction exercise. However, the question remained as to what was the most appropriate value for the **mtry** tuning parameter. That is, how many variables should be selected at each branch of the tree.  
+  
+In order to answer the above question, I ran the random forest algorithm through all possible values of **mtry** from 1 to 52 with 10-fold cross validation with the default **ntree** of 500.
+
+```{r modelBuild}
+# Search for the best 'mtry' value using 10 fold cross validation
+mtryGrid <- 1:52
+set.seed(3)
+seeds <- c(replicate(10, sample.int(1000, length(mtryGrid)), simplify = F), sample.int(1000, 1))
+modelRF <- train(classe ~ ., 
+                 data = training, 
+                 method = "rf", 
+                 trControl = trainControl(method = "cv", seeds = seeds),
+                 tuneGrid = data.frame(mtry = mtryGrid))
+
+# The time taken for the entire process
+modelRF$times$everything
+
+# Plot of Accuracy versus mtry
+plot(modelRF)
+
+# Best mtry is 9 with accuracy
+print(mtryBest <- modelRF$bestTune$mtry)
+print(mtryBestAccuracy <- modelRF$results[9, ])
+print(mtryBestError <- (1 - mtryBestAccuracy[1, 2])*100)
+```
+
+From the process and the plot, it is shown that an **mtry** value of 9 is the best. It has an error rate of **`r round(mtryBestError, 4)`%**, making the model a strong one.  
+  
+Hence, we settle on a random forest model With **mtry** value of 9.
+
+```{r finalModel}
+# Build the final model
+seeds <- as.list(sample.int(1000, 11))
+modelRFFinal <- train(.outcome ~ ., 
+                      data = training,
+                      method = "rf",
+                      trControl = trainControl(method = "cv", seeds = seeds),
+                      tuneGrid = data.frame(mtry = mtryBest))
+modelRFFinal$finalModel
+modelRFFinal$times$everything
+print(modelRFFinalAccuracy <- modelRFFinal$results)
+print(modelRFFinalError <- (1 - modelRFFinalAccuracy[1, 2])*100)
+```
+
+## Test Data Prediction
+
+Finally, the final model is applied on the test dataset and the results are written into their respective files. The last line of code is to shut off the parallel processing.
+
+```{r}
+# Apply model on test set
+predictions <- predict(modelRFFinal, testing)
+
+# Load function to write answers
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+# Write prediction answers
+pml_write_files(predictions)
+
+# Stop the cluster
+stopCluster(cl)
+```
