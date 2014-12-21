@@ -3,7 +3,7 @@ Practical-Machine-Learning-Project
 
 The Project_Writeup.html file nicely sums up the project. However, I neglected to print out the prediction results on the test data set.
 
-The prediction results are as follows:
+The prediction results are as follows:  
 1. B  
 2. A  
 3. B  
