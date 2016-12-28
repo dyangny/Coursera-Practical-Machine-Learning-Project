@@ -56,42 +56,47 @@ training[, "classe" := as.factor(classe)]
 testing[, intersect(names(testing), c(userDataVariables, NAValues)) := NULL]
 
 # Search for the best 'mtry' using 10 fold cross validation
-mtryGrid <- seq(1, 9, 2)
+mtryGrid <- expand.grid(nrounds = seq(100, 500, 100),
+                        max_depth = seq(1, 5, 1),
+                        eta = 0.3,
+                        gamma = 0.01,
+                        colsample_bytree = 1,
+                        min_child_weight = 1)
 set.seed(3)
-seeds <- c(replicate(10, sample.int(1000, length(mtryGrid)), simplify = F), sample.int(1000, 1))
-modelRF <- train(classe ~ ., 
-                 data = training, 
-                 method = "rf", 
-                 trControl = trainControl(method = "cv", seeds = seeds),
-                 tuneGrid = data.frame(mtry = mtryGrid))
+modelXGB <- train(classe ~ .,
+                  data = training,                  
+                  method = "xgbTree",    
+                  trControl = trainControl(method = "cv"),
+                  tuneGrid = mtryGrid)
 
 # The time taken for the entire process
-modelRF$times$everything
+modelXGB$times$everything
 
 # Plot of Accuracy versus mtry
-plot(modelRF)
+plot(modelXGB)
 
 # Best mtry is 9 with accuracy
-mtryBest <- modelRF$bestTune$mtry
-mtryBestAccuracy <- 
-    modelRF$results %>%
-    subset(mtry == mtryBest)
-mtryBestError <- (1 - mtryBestAccuracy[1, 2])*100
+xgbBest <- modelXGB$bestTune
+xgbBestAccuracy <- 
+    modelXGB$results %T>%
+    setDT %T>%
+    setkeyv(names(xgbBest)) %>%
+    .[as.list(xgbBest)]
+xgbBestError <- (1 - xgbBestAccuracy[['Accuracy']])*100
 
 # Build the final model
-seeds <- as.list(sample.int(1000, 11))
-modelRFFinal <- train(classe ~ ., 
-                      data = training,
-                      method = "rf",
-                      trControl = trainControl(method = "cv", seeds = seeds),
-                      tuneGrid = data.frame(mtry = mtryBest))
-modelRFFinal$finalModel
-modelRFFinal$times$everything
-modelRFFinalAccuracy <- modelRFFinal$results
-modelRFFinalError <- (1 - modelRFFinalAccuracy[1, 2])*100
+modelXGBFinal <- train(classe ~ ., 
+                       data = training,
+                       method = "xgbTree",
+                       trControl = trainControl(method = "cv"),
+                       tuneGrid = xgbBest)
+modelXGBFinal$finalModel
+modelXGBFinal$times$everything
+modelXGBFinalAccuracy <- modelXGBFinal$results
+modelXGBFinalError <- (1 - modelXGBFinalAccuracy[1, 'Accuracy'])*100
 
 # Apply model on test set
-predictions <- predict(modelRFFinal, testing)
+predictions <- predict(modelXGBFinal, testing)
 
 # Load function to write answers
 pml_write_files = function(x){
