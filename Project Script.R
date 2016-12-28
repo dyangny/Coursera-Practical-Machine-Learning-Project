@@ -1,64 +1,60 @@
-# Set Working Directory
-setwd("C:/Users/Dustin/Desktop/My Dropbox/Coursera Data Science/Github/Practical Machine Learning Project Submission")
-
 # Load required packages
-sapply(c("data.table",
-         "reshape2",
-         "doParallel",
-         "foreach",
-         "caret",
-         "randomForest",
-         "gbm"),
-       require, character.only = T)
+sapply(c('data.table',
+         'magrittr',
+         'stringr',
+         'doParallel',
+         'foreach',
+         'caret'),
+       require, 
+       character.only = T)
 
-# Code for parallel processing
-cl <- makeCluster(detectCores() - 1)
-registerDoParallel(cl)
+# Setup up parallel processing
+cl <- 
+    makeCluster(detectCores() - 1) %T>%
+    registerDoParallel()
 
 # Read in the training and test datasets
-training <- fread("Raw Data/pml-training.csv", na.strings = c("", "NA", "#DIV/0!"))
-testing <- fread("Raw Data/pml-testing.csv", na.strings = c("", "NA", "#DIV/0!"))
+training <- fread("./Raw Data/pml-training.csv", 
+                  na.strings = c("", "NA", "#DIV/0!"))
+testing <- fread("./Raw Data/pml-testing.csv", 
+                 na.strings = c("", "NA", "#DIV/0!"))
 
-# Check if the test and training datasets contain the same variables
-identical(names(testing), names(training))
-mismatchVarInd <- which(!(names(testing) %in% names(training)))
-names(testing)[mismatchVarInd]
-names(training)[mismatchVarInd]
-identical(names(testing)[1:159], names(testing)[1:159])
-
-# Inspect the training data
-str(training) # Notice there are many NA values
+# The test and train datasets do not have identical variable names
+# They differ on the 160th variable name
+commonVariables <- intersect(names(training), names(testing))
+sapply(list(training, testing),
+       function(x) {
+           differingVariable <- setdiff(names(x), commonVariables)
+           differingVariableIndex <- grep(differingVariable, names(x))
+           message(paste0('Differing variable named "', differingVariable,
+                          '" at column ', differingVariableIndex, '.\n'))
+       })
 
 # Count the number of NA values for each field
-NAValues <- training[, lapply(.SD, function(x) sum(is.na(x)))]
-str(NAValues) 
-# Seems like many columns have at least 19216 NA Values
-# Proceed to remove those columns of data since they will not be useful for prediction
-NAValues <- melt(NAValues)
-setkey(NAValues, "value")
-NAValues <- NAValues[list(0)]
-NAValues <- as.character(NAValues[["variable"]])
-# Reminding ourselves that this vector will contain those variables we want to keep
-# We need to add in the mismatched variable from the test dataset
-NAValues <- c(NAValues, names(testing)[mismatchVarInd])
-training[, names(training)[!(names(training) %in% NAValues)] := NULL]
+# Seems like many columns have either no NA values or at least 19216 NA values
+# Proceed to remove those columns of data with NA values since they will not be useful for prediction
+NAValues <- 
+    training[, lapply(.SD, function(x) sum(is.na(x)))] %>%
+    melt() %>%
+    subset(value != 0) %>%
+    .[[1]] %>%
+    as.character()
+training[, intersect(names(training), NAValues) := NULL]
 
 # Remove some additional columns because they contain user data and are not helpful
-names(training)[1:7]
-training[, names(training)[1:7] := NULL]
-str(training)
+userDataVariables <- names(training)[1:7]
+training[, intersect(names(training), userDataVariables) := NULL]
 
 # Check for non zero variance covariates
-nsv <- nearZeroVar(training, saveMetrics = T)
-nsv
+nzv <- nearZeroVar(training, saveMetrics = T)
+nzv
 # Nothing to eliminate
 
 # Convert the classe column to factor
 training[, "classe" := as.factor(classe)]
 
 # Do the same for the test set
-testing[, names(testing)[!(names(testing) %in% NAValues)] := NULL]
-testing[, names(testing)[1:7] := NULL]
+testing[, intersect(names(testing), c(userDataVariables, NAValues)) := NULL]
 
 # Search for the best 'mtry' using 10 fold cross validation
 mtryGrid <- 1:52
@@ -83,7 +79,7 @@ mtryBestError <- (1 - mtryBestAccuracy[1, 2])*100
 
 # Build the final model
 seeds <- as.list(sample.int(1000, 11))
-modelRFFinal <- train(.outcome ~ ., 
+modelRFFinal <- train(classe ~ ., 
                       data = training,
                       method = "rf",
                       trControl = trainControl(method = "cv", seeds = seeds),
